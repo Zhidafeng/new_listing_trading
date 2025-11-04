@@ -1,0 +1,34 @@
+# 币安API配置
+binance:
+  api_key: "WBxoSQadTD0sqEZtF1MqCqSKSSDpXyFfkHuW4AwbetKkRLWGMYWwXvBhXp3V7Z1a"     # 币安API密钥
+  secret_key: "DdTwnbYGwtnkY6280b6JKfcQCWUiYZbKWpvsJR2Sub2yJY7ZDXeyxyITyPGUrEdt"  # 币安密钥
+  api_type: "papi"  # API类型: fapi (U本位合约) 或 papi (统一账户)，默认fapi
+  base_url: ""      # 可选，留空使用默认值
+
+# 交易配置
+trading:
+  # 默认下单USDT金额（例如："10"表示10 USDT）
+  default_notional: "100"
+  # 持仓方向：BOTH/LONG/SHORT
+  position_side: "BOTH"
+  
+  # 止损配置
+  stop_loss:
+    enabled: true      # 是否启用止损
+    percent: 25.0       # 止损百分比（例如：2.0 表示2%）
+    working_type: "MARK_PRICE"  # 触发类型：MARK_PRICE/CONTRACT_PRICE
+  
+  # 止盈配置
+  take_profit:
+    enabled: true      # 是否启用止盈
+    percent: 45.0       # 止盈百分比（例如：5.0 表示5%）
+    working_type: "MARK_PRICE"  # 触发类型：MARK_PRICE/CONTRACT_PRICE
+
+# 日志配置
+log:
+  level: "info"        # 日志级别: trace, debug, info, warn, error, fatal, panic
+  file: "logs/app.log" # 日志文件路径，留空则只输出到控制台
+  max_size: 100        # 单个日志文件最大大小(MB)，0表示不限制
+  max_age: 7           # 日志文件保留天数，0表示不删除
+  compress: true       # 是否压缩旧日志文件
+

@@ -33,6 +33,12 @@ config.local.yaml
 
 # Logs
 *.log
+logs/
+*.pid
+
+# Build artifacts
+server
+main
 
 # OS
 .DS_Store
