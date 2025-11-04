@@ -37,8 +37,9 @@ logs/
 *.pid
 
 # Build artifacts
-server
-main
+/server
+/main
+*.exe
 
 # OS
 .DS_Store
