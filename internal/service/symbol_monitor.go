@@ -81,7 +81,7 @@ func (sm *SymbolMonitor) fetchAndUpdate(isInitial bool) error {
 
 	for _, symbol := range exchangeInfo.Symbols {
 		// 只处理状态为TRADING的币对
-		if symbol.Status != "TRADING" || symbol.Status != "PENDING_TRADING" {
+		if symbol.Status != "TRADING" && symbol.Status != "PENDING_TRADING" {
 			continue
 		}
 
