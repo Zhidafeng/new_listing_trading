@@ -30,15 +30,14 @@ fi
 # 创建日志目录
 mkdir -p logs
 
-# 编译程序（如果需要）
-if [ ! -f "$BINARY_NAME" ]; then
-    echo "正在编译程序..."
-    go build -o "$BINARY_NAME" ./cmd/server/main.go
-    if [ $? -ne 0 ]; then
-        echo "错误: 编译失败"
-        exit 1
-    fi
+# 每次启动都重新编译程序
+echo "正在编译程序..."
+go build -o "$BINARY_NAME" ./cmd/server/main.go
+if [ $? -ne 0 ]; then
+    echo "错误: 编译失败"
+    exit 1
 fi
+echo "编译完成"
 
 # 启动服务
 echo "正在启动服务..."
