@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -125,11 +127,20 @@ type OrderSetResponse struct {
 // handleSimulateNewListing 处理模拟新币上线请求（支持批量）
 func (s *Server) handleSimulateNewListing(c *gin.Context) {
 	var req SimulateNewListingRequest
-	// 使用 BindJSON 而不是 ShouldBindJSON，避免验证错误
-	if err := c.BindJSON(&req); err != nil {
+	// 手动解析JSON，避免Gin的验证器检查required标签
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "请求参数错误: " + err.Error(),
+			"message": "读取请求体失败: " + err.Error(),
+		})
+		return
+	}
+
+	if err := json.Unmarshal(body, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "解析JSON失败: " + err.Error(),
 		})
 		return
 	}
