@@ -125,10 +125,20 @@ type OrderSetResponse struct {
 // handleSimulateNewListing 处理模拟新币上线请求（支持批量）
 func (s *Server) handleSimulateNewListing(c *gin.Context) {
 	var req SimulateNewListingRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// 使用 BindJSON 而不是 ShouldBindJSON，避免验证错误
+	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "请求参数错误: " + err.Error(),
+		})
+		return
+	}
+
+	// 验证至少提供了 symbols 或 symbol 之一
+	if len(req.Symbols) == 0 && req.Symbol == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "请提供币对列表(symbols)或单个币对(symbol)",
 		})
 		return
 	}
