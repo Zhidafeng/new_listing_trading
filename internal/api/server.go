@@ -93,7 +93,6 @@ func (s *Server) Start() error {
 // SimulateNewListingRequest 模拟新币上线请求（支持单个或批量）
 type SimulateNewListingRequest struct {
 	Symbols      []string `json:"symbols"`                 // 币对列表，例如 ["BTCUSDT", "ETHUSDT"]
-	Symbol       string   `json:"symbol,omitempty"`        // 单个币对名称（兼容旧接口），例如 "BTCUSDT"
 	NotionalUSDT string   `json:"notional_usdt,omitempty"` // USDT金额，留空使用配置默认值
 }
 
@@ -145,15 +144,6 @@ func (s *Server) handleSimulateNewListing(c *gin.Context) {
 		return
 	}
 
-	// 验证至少提供了 symbols 或 symbol 之一
-	if len(req.Symbols) == 0 && req.Symbol == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "请提供币对列表(symbols)或单个币对(symbol)",
-		})
-		return
-	}
-
 	// 检查交易服务是否可用
 	if s.tradingService == nil {
 		c.JSON(http.StatusServiceUnavailable, SimulateNewListingResponse{
@@ -168,9 +158,6 @@ func (s *Server) handleSimulateNewListing(c *gin.Context) {
 	if len(req.Symbols) > 0 {
 		// 使用批量币对列表
 		symbols = req.Symbols
-	} else if req.Symbol != "" {
-		// 兼容旧接口：单个币对
-		symbols = []string{req.Symbol}
 	} else {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -179,35 +166,8 @@ func (s *Server) handleSimulateNewListing(c *gin.Context) {
 		return
 	}
 
-	// 如果是单个币对，使用旧接口格式返回（兼容性）
-	if len(symbols) == 1 {
-		result := s.processSingleSymbol(symbols[0], req.NotionalUSDT)
-		if result.Success {
-			c.JSON(http.StatusOK, SimulateNewListingResponse{
-				Success:  true,
-				Message:  result.Message,
-				Symbol:   result.Symbol,
-				OrderSet: result.OrderSet,
-			})
-		} else {
-			c.JSON(http.StatusInternalServerError, SimulateNewListingResponse{
-				Success: false,
-				Message: result.Message,
-				Symbol:  result.Symbol,
-			})
-		}
-		return
-	}
-
-	// 批量处理多个币对
-	logger.Infof("批量处理新币上线: %d 个币对", len(symbols))
 	results := make([]BatchOrderResult, 0, len(symbols))
-
 	for _, symbol := range symbols {
-		if symbol == "" {
-			continue
-		}
-
 		result := s.processSingleSymbol(symbol, req.NotionalUSDT)
 		results = append(results, BatchOrderResult{
 			Symbol:   result.Symbol,
