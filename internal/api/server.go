@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -87,17 +88,27 @@ func (s *Server) Start() error {
 	return s.engine.Run(":" + s.port)
 }
 
-// SimulateNewListingRequest 模拟新币上线请求
+// SimulateNewListingRequest 模拟新币上线请求（支持单个或批量）
 type SimulateNewListingRequest struct {
-	Symbol       string `json:"symbol" binding:"required"` // 币对名称，例如 "BTCUSDT"
-	NotionalUSDT string `json:"notional_usdt,omitempty"`   // USDT金额，留空使用配置默认值
+	Symbols      []string `json:"symbols"`                 // 币对列表，例如 ["BTCUSDT", "ETHUSDT"]
+	Symbol       string   `json:"symbol,omitempty"`        // 单个币对名称（兼容旧接口），例如 "BTCUSDT"
+	NotionalUSDT string   `json:"notional_usdt,omitempty"` // USDT金额，留空使用配置默认值
 }
 
 // SimulateNewListingResponse 模拟新币上线响应
 type SimulateNewListingResponse struct {
+	Success  bool               `json:"success"`
+	Message  string             `json:"message"`
+	Results  []BatchOrderResult `json:"results,omitempty"`   // 批量处理结果
+	Symbol   string             `json:"symbol,omitempty"`    // 单个币对结果（兼容旧接口）
+	OrderSet *OrderSetResponse  `json:"order_set,omitempty"` // 单个币对订单（兼容旧接口）
+}
+
+// BatchOrderResult 批量订单结果
+type BatchOrderResult struct {
+	Symbol   string            `json:"symbol"`
 	Success  bool              `json:"success"`
 	Message  string            `json:"message"`
-	Symbol   string            `json:"symbol,omitempty"`
 	OrderSet *OrderSetResponse `json:"order_set,omitempty"`
 }
 
@@ -111,7 +122,7 @@ type OrderSetResponse struct {
 	TakeProfitError string                `json:"take_profit_error,omitempty"`
 }
 
-// handleSimulateNewListing 处理模拟新币上线请求
+// handleSimulateNewListing 处理模拟新币上线请求（支持批量）
 func (s *Server) handleSimulateNewListing(c *gin.Context) {
 	var req SimulateNewListingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -131,40 +142,109 @@ func (s *Server) handleSimulateNewListing(c *gin.Context) {
 		return
 	}
 
+	// 确定要处理的币对列表
+	var symbols []string
+	if len(req.Symbols) > 0 {
+		// 使用批量币对列表
+		symbols = req.Symbols
+	} else if req.Symbol != "" {
+		// 兼容旧接口：单个币对
+		symbols = []string{req.Symbol}
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "请提供币对列表(symbols)或单个币对(symbol)",
+		})
+		return
+	}
+
+	// 如果是单个币对，使用旧接口格式返回（兼容性）
+	if len(symbols) == 1 {
+		result := s.processSingleSymbol(symbols[0], req.NotionalUSDT)
+		if result.Success {
+			c.JSON(http.StatusOK, SimulateNewListingResponse{
+				Success:  true,
+				Message:  result.Message,
+				Symbol:   result.Symbol,
+				OrderSet: result.OrderSet,
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, SimulateNewListingResponse{
+				Success: false,
+				Message: result.Message,
+				Symbol:  result.Symbol,
+			})
+		}
+		return
+	}
+
+	// 批量处理多个币对
+	logger.Infof("批量处理新币上线: %d 个币对", len(symbols))
+	results := make([]BatchOrderResult, 0, len(symbols))
+
+	for _, symbol := range symbols {
+		if symbol == "" {
+			continue
+		}
+
+		result := s.processSingleSymbol(symbol, req.NotionalUSDT)
+		results = append(results, BatchOrderResult{
+			Symbol:   result.Symbol,
+			Success:  result.Success,
+			Message:  result.Message,
+			OrderSet: result.OrderSet,
+		})
+	}
+
+	// 统计成功和失败数量
+	successCount := 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		}
+	}
+
+	c.JSON(http.StatusOK, SimulateNewListingResponse{
+		Success: successCount > 0,
+		Message: fmt.Sprintf("批量处理完成: 成功 %d/%d", successCount, len(results)),
+		Results: results,
+	})
+}
+
+// processSingleSymbol 处理单个币对的下单流程
+func (s *Server) processSingleSymbol(symbol, notionalUSDT string) BatchOrderResult {
 	// 模拟新币上线：添加到监控服务的新币对列表
 	onboardDate := time.Now().UnixMilli()
-	added := s.symbolMonitor.AddNewListing(req.Symbol, onboardDate)
+	added := s.symbolMonitor.AddNewListing(symbol, onboardDate)
 	if !added {
-		logger.Infof("币对 %s 已存在，继续执行交易流程", req.Symbol)
+		logger.Infof("币对 %s 已存在，继续执行交易流程", symbol)
 	}
 
 	// 检查是否已经下单过
-	if listing, exists := s.symbolMonitor.GetNewListing(req.Symbol); exists && listing.IsOrdered {
-		c.JSON(http.StatusBadRequest, SimulateNewListingResponse{
+	if listing, exists := s.symbolMonitor.GetNewListing(symbol); exists && listing.IsOrdered {
+		return BatchOrderResult{
+			Symbol:  symbol,
 			Success: false,
-			Message: "币对 " + req.Symbol + " 已经下单过了",
-			Symbol:  req.Symbol,
-		})
-		return
+			Message: "币对 " + symbol + " 已经下单过了",
+		}
 	}
 
 	// 执行交易流程
-	logger.Infof("模拟新币上线: %s, 开始执行交易流程...", req.Symbol)
-	orderSet, err := s.tradingService.CreateOrdersWithStopLossAndTakeProfit(req.Symbol, req.NotionalUSDT)
+	logger.Infof("模拟新币上线: %s, 开始执行交易流程...", symbol)
+	orderSet, err := s.tradingService.CreateOrdersWithStopLossAndTakeProfit(symbol, notionalUSDT)
 
 	if err != nil {
 		logger.Errorf("交易流程执行失败: %v", err)
-		c.JSON(http.StatusInternalServerError, SimulateNewListingResponse{
+		return BatchOrderResult{
+			Symbol:  symbol,
 			Success: false,
 			Message: "交易流程执行失败: " + err.Error(),
-			Symbol:  req.Symbol,
-		})
-		return
+		}
 	}
 
 	// 标记为已下单
 	if s.symbolMonitor != nil {
-		s.symbolMonitor.MarkAsOrdered(req.Symbol)
+		s.symbolMonitor.MarkAsOrdered(symbol)
 	}
 
 	// 构建响应
@@ -188,12 +268,12 @@ func (s *Server) handleSimulateNewListing(c *gin.Context) {
 		orderSetResp.TakeProfitError = orderSet.TakeProfitError.Error()
 	}
 
-	c.JSON(http.StatusOK, SimulateNewListingResponse{
+	return BatchOrderResult{
+		Symbol:   symbol,
 		Success:  true,
 		Message:  "新币上线模拟成功，已创建订单",
-		Symbol:   req.Symbol,
 		OrderSet: orderSetResp,
-	})
+	}
 }
 
 // handleStatus 处理状态查询请求
