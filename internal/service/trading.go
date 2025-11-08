@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 
@@ -470,6 +471,81 @@ func (ts *TradingService) QueryOrder(symbol string, orderID int64) (*models.Orde
 		OrderID: orderID,
 	}
 	return ts.client.QueryOrder(params)
+}
+
+// GetNegativePositions 查询收益为负的仓位并排序
+func (ts *TradingService) GetNegativePositions() (*models.NegativePositionResponse, error) {
+	// 查询所有持仓（symbol为空表示查询所有）
+	positionRisks, err := ts.client.GetPositionRisk("")
+	if err != nil {
+		return nil, fmt.Errorf("查询持仓失败: %w", err)
+	}
+
+	// 转换为Position模型并筛选负收益仓位
+	negativePositions := make([]models.Position, 0)
+	for _, pr := range positionRisks {
+		// 解析持仓数量
+		positionAmt, err := strconv.ParseFloat(pr.PositionAmt, 64)
+		if err != nil || positionAmt == 0 {
+			// 跳过持仓数量为0的仓位
+			continue
+		}
+
+		// 解析未实现盈亏
+		unRealizedProfit, err := strconv.ParseFloat(pr.UnRealizedProfit, 64)
+		if err != nil {
+			logger.Warnf("解析未实现盈亏失败: %s, symbol: %s", pr.UnRealizedProfit, pr.Symbol)
+			continue
+		}
+
+		// 只保留负收益的仓位
+		if unRealizedProfit >= 0 {
+			continue
+		}
+
+		// 解析其他字段
+		entryPrice, _ := strconv.ParseFloat(pr.EntryPrice, 64)
+		markPrice, _ := strconv.ParseFloat(pr.MarkPrice, 64)
+		liquidationPrice, _ := strconv.ParseFloat(pr.LiquidationPrice, 64)
+		leverage, _ := strconv.ParseFloat(pr.Leverage, 64)
+		notional, _ := strconv.ParseFloat(pr.Notional, 64)
+
+		// 计算收益率百分比
+		profitPercent := 0.0
+		if entryPrice > 0 && notional > 0 {
+			// 收益率 = 未实现盈亏 / 持仓名义价值 * 100
+			profitPercent = (unRealizedProfit / notional) * 100
+		}
+
+		position := models.Position{
+			Symbol:           pr.Symbol,
+			PositionAmt:      positionAmt,
+			EntryPrice:       entryPrice,
+			MarkPrice:        markPrice,
+			UnRealizedProfit: unRealizedProfit,
+			LiquidationPrice: liquidationPrice,
+			Leverage:         leverage,
+			MarginType:       pr.MarginType,
+			PositionSide:     pr.PositionSide,
+			Notional:         notional,
+			UpdateTime:       pr.UpdateTime,
+			ProfitPercent:    profitPercent,
+		}
+
+		negativePositions = append(negativePositions, position)
+	}
+
+	// 按亏损金额从大到小排序（未实现盈亏越小，亏损越大）
+	sort.Slice(negativePositions, func(i, j int) bool {
+		return negativePositions[i].UnRealizedProfit < negativePositions[j].UnRealizedProfit
+	})
+
+	logger.Infof("查询到 %d 个负收益仓位", len(negativePositions))
+
+	return &models.NegativePositionResponse{
+		TotalCount: len(negativePositions),
+		Positions:  negativePositions,
+	}, nil
 }
 
 // OrderSet 订单集合（卖单+止损+止盈）

@@ -22,12 +22,14 @@ const (
 	FAPIExchangeInfoEndpoint = "/fapi/v1/exchangeInfo"
 	FAPIOrderEndpoint        = "/fapi/v1/order"
 	FAPITickerPriceEndpoint  = "/fapi/v1/ticker/price"
+	FAPIPositionRiskEndpoint = "/fapi/v2/positionRisk" // 持仓风险查询
 
 	// PAPI端点（统一账户U本位合约）
 	PAPIExchangeInfoEndpoint     = "/papi/v1/um/exchangeInfo"
 	PAPIOrderEndpoint            = "/papi/v1/um/order"
 	PAPITickerPriceEndpoint      = "/papi/v1/um/ticker/price"
 	PAPIConditionalOrderEndpoint = "/papi/v1/um/conditional/order" // 统一账户条件单接口
+	PAPIPositionRiskEndpoint     = "/papi/v1/um/positionRisk"      // 统一账户持仓风险查询
 )
 
 // APIError 自定义API错误
@@ -596,6 +598,79 @@ func (c *Client) GetTickerPrice(symbol string) (*models.TickerPrice, error) {
 	}
 
 	return &tickerPrice, nil
+}
+
+// GetPositionRisk 查询持仓风险信息
+// symbol: 交易对，留空则查询所有持仓
+func (c *Client) GetPositionRisk(symbol string) ([]models.PositionRisk, error) {
+	if c.apiKey == "" || c.secretKey == "" {
+		return nil, fmt.Errorf("API密钥和密钥未设置，请使用NewClientWithAuth创建客户端")
+	}
+
+	// 设置时间戳
+	timestamp := time.Now().UnixMilli()
+	recvWindow := int64(10000) // 10秒窗口
+
+	// 构建参数字典
+	params := make(map[string]string)
+	if symbol != "" {
+		params["symbol"] = symbol
+	}
+	params["recvWindow"] = strconv.FormatInt(recvWindow, 10)
+	params["timestamp"] = strconv.FormatInt(timestamp, 10)
+
+	// 构建查询字符串
+	queryString := BuildQueryString(params)
+
+	// 签名
+	signature := signQueryString(queryString, c.secretKey)
+	queryStringWithSig := queryString + "&signature=" + signature
+
+	// 获取端点
+	var endpoint string
+	if c.apiType == "papi" {
+		endpoint = PAPIPositionRiskEndpoint
+	} else {
+		endpoint = FAPIPositionRiskEndpoint
+	}
+
+	// 构建URL
+	requestURL := fmt.Sprintf("%s%s?%s", c.baseURL, endpoint, queryStringWithSig)
+
+	// 创建GET请求
+	httpReq, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+
+	// 设置请求头
+	httpReq.Header.Set("X-MBX-APIKEY", c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	// 发送请求
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	// 检查错误响应
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleHTTPError(resp.StatusCode, body)
+	}
+
+	// 解析响应
+	var positionRisks []models.PositionRisk
+	if err := json.Unmarshal(body, &positionRisks); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	return positionRisks, nil
 }
 
 // signQueryString 对查询字符串进行HMAC SHA256签名

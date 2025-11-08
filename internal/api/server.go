@@ -69,6 +69,7 @@ func (s *Server) registerRoutes() {
 		api.GET("/status", s.handleStatus)
 		api.GET("/new-listings", s.handleGetNewListings)
 		api.GET("/symbols", s.handleGetSymbols)
+		api.GET("/positions/negative", s.handleGetNegativePositions)
 	}
 
 	// 健康检查
@@ -85,6 +86,7 @@ func (s *Server) Start() error {
 	logger.Info("  GET  /api/status - 获取服务状态")
 	logger.Info("  GET  /api/new-listings - 获取新币对列表")
 	logger.Info("  GET  /api/symbols - 获取所有币对")
+	logger.Info("  GET  /api/positions/negative - 查询收益为负的仓位（已排序）")
 	logger.Info("  GET  /health - 健康检查")
 
 	return s.engine.Run(":" + s.port)
@@ -277,4 +279,29 @@ func (s *Server) handleGetNewListings(c *gin.Context) {
 func (s *Server) handleGetSymbols(c *gin.Context) {
 	symbols := s.symbolMonitor.GetSymbols()
 	c.JSON(http.StatusOK, symbols)
+}
+
+// handleGetNegativePositions 查询收益为负的仓位
+func (s *Server) handleGetNegativePositions(c *gin.Context) {
+	// 检查交易服务是否可用
+	if s.tradingService == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"success": false,
+			"message": "交易服务未初始化，请检查配置文件中的API密钥设置",
+		})
+		return
+	}
+
+	// 查询负收益仓位
+	result, err := s.tradingService.GetNegativePositions()
+	if err != nil {
+		logger.Errorf("查询负收益仓位失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "查询负收益仓位失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
